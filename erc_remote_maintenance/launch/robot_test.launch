@@ -1,5 +1,0 @@
-<launch>
-
-  <node pkg="erc_remote_maintenance" type="robot_test.py"  name="robot_test" output="screen"/>
-
-</launch>
