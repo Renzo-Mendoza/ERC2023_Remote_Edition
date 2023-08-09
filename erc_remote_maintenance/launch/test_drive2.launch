@@ -1,7 +1,7 @@
 <launch>
   <arg name="markerSize"      default="0.05"/>
   
-  <include file="$(find aruco_ros)/launch/marker_publisher.launch.launch">
+  <include file="$(find aruco_ros)/launch/erc_aruco_detect.launch">
         <arg name="markerSize" value="$(arg markerSize)"/>
   </include>
   
