@@ -6,11 +6,12 @@
 
 import numpy as np
 import time
-from moveit_commander.conversions import pose_to_list, list_to_pose
+import moveit_commander
 from scipy.spatial.transform import Rotation
 from rospkg import RosPack
 import yaml
 from .FunctionsConstants import *
+
 
 # ---------------------------------------------------------------------------------- #
 # ---------------------------- GEOMETRIC FUNCTIONS --------------------------------- #
@@ -23,26 +24,22 @@ from .FunctionsConstants import *
 # @param: euler_rep    -> String, current euler representation, in case.
 # @param: to_euler_rep -> String, desired euler representation, in case.
 # @returns: Array
-def rot2rot(orientation, rot_rep = ROT_MATRIX_REP, in_rotvect = False, in_euler = 'zxz', out_euler = 'zxz', in_degrees = True, out_degrees = True):
-    if in_rotvect:
-        _rotation = Rotation.from_rotvec(orientation)
-    elif len(orientation.shape) == 1 and orientation.shape[0] == 4:
+def rot2rot(orientation, rot_rep = ROT_MATRIX_REP, in_euler = 'zxz', out_euler = 'zxz', in_degrees = True, out_degrees = True):
+    if len(orientation.shape) == 1 and orientation.shape[0] == 4:
         _rotation = Rotation.from_quat(orientation)
     elif len(orientation.shape) == 2:
         _rotation = Rotation.from_dcm(orientation)
     elif len(orientation.shape) == 1 and orientation.shape[0] == 3:
         _rotation = Rotation.from_euler(in_euler, orientation, degrees = in_degrees)
     else:
-        return False, orientation
+        return None
     
     if rot_rep == ROT_MATRIX_REP:
-        return True, _rotation.as_dcm()
+        return _rotation.as_dcm()
     elif rot_rep == ROT_QUAT_REP:
-        return True, _rotation.as_quat()
+        return _rotation.as_quat()
     elif rot_rep == ROT_EULER_REP:
-        return True, _rotation.as_euler(out_euler, degrees = out_degrees)
-    elif rot_rep == ROT_VECTOR_REP:
-        return True, _rotation.as_rotvec()
+        return _rotation.as_euler(out_euler, degrees = out_degrees)
 
 # move_point: Method that determines the position of a point displaced either along a 
 #             specific axis relative to an orientation or along an absolute axis.
@@ -55,7 +52,7 @@ def move_point(point, orientation, dist, axis = Z_AXIS_INDEX, absolute = False):
     if absolute:
         matrix = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
     else:
-        _, matrix = rot2rot(orientation, ROT_MATRIX_REP)
+        matrix = rot2rot(orientation, ROT_MATRIX_REP)
     return  point + dist*matrix[:,[axis]]
 
 # move_pose_axis: Method that determines the final pose displaced either along a 
@@ -174,6 +171,14 @@ def rot_align_axis(vector, matrix = BASE_MATRIX, axis = X_AXIS_INDEX, degrees = 
                                        cross_vector(matrix[:,[axis]],vector)/np.linalg.norm(cross_vector(vector,matrix[:,[axis]])), 
                                        degrees = degrees)
 
+# rot_displacement: Method that rotates a displacement vector.
+# @param: disp        -> Array, displacement vector.
+# @param: orientation -> Array, orientation for relative displacement.
+# @returns: Array
+def rot_displacement(disp, orientation):
+    return rot2rot(orientation, rot_rep = ROT_MATRIX_REP)@disp
+
+
 # ---------------------------------------------------------------------------------- #
 # ------------------------------- SCENE FUNCTIONS ---------------------------------- #
 # ---------------------------------------------------------------------------------- #
@@ -205,7 +210,7 @@ def delay(miliseconds):
 # @returns: Array
 def pose2array(pose, or_as = ROT_QUAT_REP, euler_rep = 'zxz', to_euler_rep = 'zxz'):
     position_array = np.transpose(np.array([pose_to_list(pose)[0:3]]))
-    _, orientation_array = rot2rot(np.array(pose_to_list(pose)[3:7]), rot_rep = or_as, in_euler = euler_rep, out_euler = to_euler_rep)
+    orientation_array = rot2rot(np.array(pose_to_list(pose)[3:7]), rot_rep = or_as, in_euler = euler_rep, out_euler = to_euler_rep)
     return position_array, orientation_array
 
 # pose2array: Method that converts position and orientation arrays to pose class.
@@ -213,7 +218,7 @@ def pose2array(pose, or_as = ROT_QUAT_REP, euler_rep = 'zxz', to_euler_rep = 'zx
 # @param: orientation_array -> Array, orientation array
 # @returns: Pose
 def array2pose(position_array, orientation_array):
-    _, orientation_quat = rot2rot(orientation_array, ROT_QUAT_REP)
+    orientation_quat = rot2rot(orientation_array, ROT_QUAT_REP)
     return list_to_pose([position_array[0,0], position_array[1,0], position_array[2,0], 
                             orientation_quat[0], orientation_quat[1], orientation_quat[2], orientation_quat[3]])
 
@@ -222,5 +227,17 @@ def array2pose(position_array, orientation_array):
 # @returns: Arrays
 def pose2vectors(pose):
     pos_vector = np.transpose(np.array([pose_to_list(pose)[0:3]]))
-    _, or_matrix = rot2rot(np.array(pose_to_list(pose)[3:7]), rot_rep = ROT_MATRIX_REP)
+    or_matrix = rot2rot(np.array(pose_to_list(pose)[3:7]), rot_rep = ROT_MATRIX_REP)
     return pos_vector, or_matrix[:,[X_AXIS_INDEX]], or_matrix[:,[Y_AXIS_INDEX]], or_matrix[:,[Z_AXIS_INDEX]]
+
+# pose_to_list: Method that converts pose class to list.
+# @param: pose -> Pose, pose.
+# @returns: lists
+def pose_to_list(pose):
+    return moveit_commander.conversions.pose_to_list(pose)
+
+# list_to_pose: Method that converts lists to pose class.
+# @param: list -> List, list.
+# @returns: Pose
+def list_to_pose(list):
+    return moveit_commander.conversions.list_to_pose(list)
