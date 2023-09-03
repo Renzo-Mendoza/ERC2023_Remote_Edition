@@ -1,0 +1,19 @@
+<launch>
+  <arg name="markerSize50"      default="0.05"/>
+  <arg name="markerSize40"      default="0.04"/>
+  <arg name="node_name50"      default="aruco_marker_publisher50"/>
+  <arg name="node_name40"      default="aruco_marker_publisher40"/>
+  
+  <include file="$(find aruco_srv)/launch/erc_aruco_single.launch">
+        <arg name="node_name" value="$(arg node_name50)"/>
+        <arg name="markerSize" value="$(arg markerSize50)"/>
+  </include>
+
+  <include file="$(find aruco_srv)/launch/erc_aruco_single.launch">
+        <arg name="node_name" value="$(arg node_name40)"/>
+        <arg name="markerSize" value="$(arg markerSize40)"/>
+  </include>
+
+  <node pkg="aruco_srv" type="aruco_service.py"  name="aruco_service"/>
+  
+</launch>

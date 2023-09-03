@@ -1,0 +1,12 @@
+<launch>
+  <arg name="markerSize50"      default="0.05"/>
+  <arg name="markerSize40"      default="0.04"/>
+  
+  <include file="$(find aruco_srv)/launch/erc_aruco_full.launch">
+      <arg name="markerSize50"      default="$(arg markerSize50)"/>
+      <arg name="markerSize40"      default="$(arg markerSize40)"/>
+  </include>
+
+  <node pkg="erc_remote_maintenance" type="obj1.py"  name="obj1" output="screen"/>
+
+</launch>

@@ -1,0 +1,8 @@
+<launch>
+  <arg name="tag"      default="0"/>
+    
+  <node pkg="erc_remote_maintenance" type="obj9.py"  name="obj9" output="screen">
+    <param name="tag" type="int" value="$(arg tag)"/>
+  </node>
+
+</launch>

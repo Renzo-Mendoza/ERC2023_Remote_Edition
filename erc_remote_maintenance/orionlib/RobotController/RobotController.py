@@ -7,7 +7,6 @@
 import sys
 import copy
 import rospy
-import pandas as pd
 import moveit_commander
 import moveit_msgs.msg
 import geometry_msgs.msg
@@ -15,7 +14,9 @@ import std_msgs.msg
 import numpy as np
 import rosservice
 from erc_aruco_msg.srv import ErcArucoRequest, ErcArucoResponse, ErcAruco
+from aruco_srv.srv import ArucoRequestRequest, ArucoRequestResponse, ArucoRequest
 from math import dist, fabs, cos
+from aruco_msgs.msg import MarkerArray
 from .ControllerConstants import *
 from .ControllerFunctions import *
 
@@ -44,26 +45,33 @@ class RobotController(object):
                        robot_name = UR3_ERC_NAME, 
                        display_path_topic = DISPLAY_PATH_TOPIC,
                        markers_detect = False,
+                       load_markers_base = False,
                        markers_pkg = MRKRS_PKG,
                        markers_folder = MRKRS_FOLDER,
                        markers_file_name = MRKRS_FILE_NAME,
+                       markers_base_file_name = MRKRS_BASE_FILE_NAME,
                        node_name = CONTROLLER_NAME):
-        # Allow using properties and methods of parent class
-        super(RobotController, self).__init__()
-        # Initialize MoveIt!
-        moveit_commander.roscpp_initialize(sys.argv)
-        # Initialize node
-        rospy.init_node(node_name, anonymous=True)
-        _rate = rospy.Rate(10)
-        # Object to get robot parameters and properties
-        _robot = moveit_commander.RobotCommander()
-        # Object to get robot scene parameters and description
-        _scene = moveit_commander.PlanningSceneInterface()
         # Object to controll move groups
         _robot_group_name = robot_group_name
         _gripper_group_name = gripper_group_name
         _robot_name = robot_name
         _display_path_topic = display_path_topic
+        _markers_pkg = markers_pkg
+        _markers_folder = markers_folder
+        _markers_file_name = markers_file_name
+        _markers_base_file_name = markers_base_file_name
+        _node_name = node_name
+        # Allow using properties and methods of parent class
+        super(RobotController, self).__init__()
+        # Initialize MoveIt!
+        moveit_commander.roscpp_initialize(sys.argv)
+        # Initialize node
+        rospy.init_node(_node_name, anonymous=True)
+        _rate = rospy.Rate(10)
+        # Object to get robot parameters and properties
+        _robot = moveit_commander.RobotCommander()
+        # Object to get robot scene parameters and description
+        _scene = moveit_commander.PlanningSceneInterface()
         _move_group = moveit_commander.MoveGroupCommander(_robot_group_name)
         # Trajectory publisher
         _trajectory_pub = rospy.Publisher(
@@ -96,20 +104,47 @@ class RobotController(object):
         _pose_path = geometry_msgs.msg.Pose()
         _gripper_state = std_msgs.msg.String(GRIPPER_OPEN)
         _mrkrs = {}
-        _buttons = {}
+        _mrkrs_base = {}
+        _aruco_error = {}
         _erc_srv = None
         _srv_request = ErcArucoRequest()
         _srv_response = ErcArucoResponse()
+        _aruco_srv = None
+        _aruco_request = ArucoRequestRequest()
+        _aruco_response = ArucoRequestResponse()
         # Scene description
         if markers_detect:
-            _mrkrs = load_markers_poses(markers_pkg , markers_folder, markers_file_name)
-            _buttons = self.get_buttons_dictionary
-        if "/"+SRV_NAME in rosservice.get_service_list():
-            rospy.wait_for_service(SRV_NAME)
-            _erc_srv = rospy.ServiceProxy(SRV_NAME,ErcAruco)
-            rospy.loginfo("Service erc aruco checker available")
+            rospy.loginfo("Loading markers file...")
+            try:
+                _mrkrs = load_markers_poses(_markers_pkg , _markers_folder, _markers_file_name)
+            except:
+                rospy.loginfo("No markers file available.")
         else:
-            rospy.loginfo("No service erc aruco checker available")
+            rospy.loginfo("No marker information loaded.")
+        
+        if load_markers_base:
+            rospy.loginfo("Loading base markers file...")
+            try:
+                _mrkrs_base = load_markers_poses(_markers_pkg , _markers_folder, _markers_base_file_name)
+                for _mrkr in (set(_mrkrs_base.keys()) - set(_mrkrs.keys())):
+                    if _mrkr == IMU_DEST_MRKR or _mrkr == INSP_PNL_MRKR or _mrkr == INSP_PNL_CVR_MRKR or _mrkr == INSP_PNL_CVR_STG_MRKR:
+                        _mrkrs[_mrkr] = copy.deepcopy(_mrkrs_base.get(_mrkr))
+            except:
+                rospy.loginfo("No base markers file available.")
+            #_buttons = self.get_buttons_dictionary
+        if "/"+ERC_SRV_NAME in rosservice.get_service_list():
+            rospy.wait_for_service(ERC_SRV_NAME)
+            _erc_srv = rospy.ServiceProxy(ERC_SRV_NAME, ErcAruco)
+            rospy.loginfo("Service erc aruco checker available.")
+        else:
+            rospy.loginfo("No service erc aruco checker available.")
+        
+        if "/"+ARUCO_SRV_NAME in rosservice.get_service_list():
+            rospy.wait_for_service(ARUCO_SRV_NAME)
+            _aruco_srv = rospy.ServiceProxy(ARUCO_SRV_NAME, ArucoRequest)
+            rospy.loginfo("Service aruco detect available.")
+        else:
+            rospy.loginfo("No service aruco detect available.")
         # Class objects
         self._robot = _robot
         self._scene = _scene 
@@ -136,10 +171,22 @@ class RobotController(object):
         self._imu_pose = geometry_msgs.msg.Pose()
         self._insp_box_pose = geometry_msgs.msg.Pose()
         self._mrkrs = _mrkrs
-        self._buttons = _buttons
+        self._mrkrs_base = _mrkrs_base
+        self._aruco_error = _aruco_error
         self._erc_srv = _erc_srv
         self._srv_request = _srv_request
         self._srv_response = _srv_response
+        self._aruco_srv = _aruco_srv
+        self._aruco_request = _aruco_request
+        self._aruco_response = _aruco_response
+        self._markers_pkg = _markers_pkg
+        self._markers_folder = _markers_folder
+        self._markers_file_name = _markers_file_name
+        self._node_name = _node_name
+        self._active_update50 = False
+        self._subs_mrkr50 = rospy.Subscriber(MRKRS50_ARUCO_TOPIC_NAME, MarkerArray, self.update_mrkr_subscriber50).unregister()
+        self._active_update40 = False
+        self._subs_mrkr40 = rospy.Subscriber(MRKRS40_ARUCO_TOPIC_NAME, MarkerArray, self.update_mrkr_subscriber40).unregister()
     # ---------------------------------------------------------------------------------- #
     # -------------------------------- MAIN METHODS ------------------------------------ #
     # ---------------------------------------------------------------------------------- #
@@ -194,7 +241,42 @@ class RobotController(object):
     # go_home: Method that positions the group of links at each of the home joints configuration.
     # @returns: bool    
     def go_home(self):
-        self.control_joint_state(HOME_POS_JOINTS)
+        return self.control_joint_state(HOME_POS_JOINTS)
+
+    def go_home_safe(self):
+
+        # Move to the home position
+        #success = self._move_group.go(HOME_POS_JOINTS, wait=True)
+        success = self.go_home()
+        if not success:
+            # If planning to home position failed, try intermediate positions
+            intermediate_positions = [
+                INTERMEDIATE_LL,
+                INTERMEDIATE_RL,
+                INTERMEDIATE_ML,
+                INTERMEDIATE_LH,
+                INTERMEDIATE_RH,
+                INTERMEDIATE_MH
+            ]
+
+            # Sort goals by distance
+            current_joint_positions = self.get_current_joints_state()
+            distances = [sum((current - goal) ** 2 for current, goal in zip(current_joint_positions, intermediate))
+                 for intermediate in intermediate_positions]
+
+            sorted_intermediate_poses = [interm for _, interm in sorted(zip(distances, intermediate_positions))]
+            
+            # Test moving to the closes intermediate position
+            for intermediate_joint_values in sorted_intermediate_poses:
+                success = self._move_group.go(intermediate_joint_values, wait=True)
+                if success:
+                    print("intermediate value")
+                    print(intermediate_joint_values)
+                    # If intermediate position reached, try moving to home position again
+                    self._move_group.go(HOME_POS_JOINTS, wait=True)
+                    break
+
+        self._move_group.stop()
     
     # control_pose_state: Method that positions the end-efector link at the desired pose
     # @param: pose_goal -> Pose, desired end-efector pose.
@@ -223,6 +305,26 @@ class RobotController(object):
     def execute_plan(self):
         self._move_group.execute(self._plan, wait=True)
 
+    # control_cartesian: Method that executes movement to get at a desearid pose in cartesian
+    #                    space.
+    # @returns: void
+    def control_cartesian(self, pose):
+        self.load_waypoint(pose)
+        self.plan_cartesian_path()
+        self.display_trajectory()
+        self.execute_plan()
+        self.clear_waypoints()
+
+    # control_cartesian_disp: Method that executes movement to follow the desired displacemt in
+    #                         cartesian space.
+    # @returns: void
+    def control_cartesian_disp(self, dist, axis, absolute = False):
+        self.load_waypoint(move_pose_axis(self.get_current_pose(), dist, axis, absolute=absolute))
+        self.plan_cartesian_path()
+        self.display_trajectory()
+        self.execute_plan()
+        self.clear_waypoints()
+
     # ---------------------------------------------------------------------------------- #
     # ------------------------------ GEOMETRIC METHODS --------------------------------- #
     # ---------------------------------------------------------------------------------- #
@@ -243,14 +345,14 @@ class RobotController(object):
     # ---------------------------------------------------------------------------------- #
     # -------------------------------- SCENE METHODS ----------------------------------- #
     # ---------------------------------------------------------------------------------- #
-    
+
     # reload_mrkrs: Method that reload markers poses.
     # @param: markers_pkg        -> String, Package where markers information is located.
     # @param: markers_folder     -> String, Folder inside the package.
     # @param: markers_file_name  -> String, Markers information file name.
     # @returns: void
-    def reload_mrkrs(self, markers_pkg = MRKRS_PKG, markers_folder = MRKRS_FOLDER, markers_file_name = MRKRS_FILE_NAME):
-        self._mrkrs = load_markers_poses(markers_pkg , markers_folder, markers_file_name)
+    def reload_mrkrs(self):
+        self._mrkrs = load_markers_poses(self._markers_pkg, self._markers_folder, self._markers_file_name)
 
     # update_mrkr_pose: Method that updates any marker pose in the dictionary.
     # @param: mrkr -> String, marker name: BUTTON_MRKR, IMU_MRKR, IMU_DEST_MRKR,
@@ -259,9 +361,15 @@ class RobotController(object):
     # @returns: void
     def update_mrkr_pose(self, mrkr, pose):
         try:
-            self._mrkrs[mrkr] = pose_to_list(pose)
+            self._mrkrs[mrkr] = copy.deepcopy(pose_to_list(pose))
         except:
-            self._mrkrs = {mrkr: pose_to_list(pose)}
+            self._mrkrs = {mrkr: copy.deepcopy(pose_to_list(pose))}
+    
+    # write_mrkrs: Method that writes markers dictionary into yaml file.
+    # @returns: void
+    def write_mrkrs(self):
+        safe_mrkr_pose(self._mrkrs ,self._markers_pkg, self._markers_folder, self._markers_file_name)
+        rospy.loginfo("Markers file updated correctly.")
 
     # get_mrkr_pose: Method that returns an specific marker pose.
     # @param: mrkr            -> String, marker name: BUTTON_MRKR, IMU_MRKR, IMU_DEST_MRKR,
@@ -374,7 +482,54 @@ class RobotController(object):
             _seconds = rospy.get_time()
         # If we exited the while loop without returning then we timed out
         return False
+
+    # add_basics_scene: Method that adds basic objects to scene.
+    # @param: timeout        -> Float, wait time.
+    # @param: z_disp_ground  -> Float, displacement in z axis.
+    # @returns: bool
+    def add_basics_scene(self, z_disp_ground = OFFSET_PLANE_TO_GND, timeout = TIMEOUT):
+        self.add_object(BASICS_SCENE+"1", CUBOID, array2pose(DISP_ARM_TO_FRAME, SUP_FRAME_ARM_QUAT), SUP_FRAME_UR5, timeout = timeout)
+        _insp_box_stg_pose = self.get_mrkr_pose(INSP_PNL_CVR_STG_MRKR)
+        if _insp_box_stg_pose != None:
+            _p, _, _, _z = pose2vectors(move_pose_axis(_insp_box_stg_pose, -MRKR_WIDTH, axis = Z_AXIS_INDEX, absolute = False))
+            self.add_plane(BASICS_SCENE+"2", normal=_z.flatten(), offset=dot_vector(_z,_p+_z*z_disp_ground), timeout = timeout)
+        else:
+            self.add_plane(BASICS_SCENE+"2", normal=Z_AXIS.flatten(), offset=BASE_OFF_ARM_TO_GND, timeout = timeout)
+
+    # add_all_scene: Method that adds all objects to scene.
+    # @param: timeout        -> Float, wait time.
+    # @returns: bool
+    def add_all_scene(self, load_imu = True, timeout = TIMEOUT):
+        self.add_basics_scene(timeout = timeout)
+        self.add_buttons_plane(timeout = timeout)
+        self.add_buttons(timeout = timeout)
+        if load_imu:
+            self.add_imu(timeout = timeout)
+        self.add_left_panel(timeout = timeout)
+        self.add_inspection_box(timeout = timeout)
+        self.add_inspection_box_cover(timeout = timeout)
     
+    # remove_all_scene: Method that removes all objects to scene.
+    # @param: timeout        -> Float, wait time.
+    # @returns: bool
+    def remove_all_scene(self, remove_imu = True, timeout = TIMEOUT):
+        self.remove_scene_planes(timeout = timeout)
+        self.remove_buttons(timeout = timeout)
+        if remove_imu:
+            self.remove_scene_object(IMU_NAME, timeout = timeout)
+        self.remove_scene_object(IMU_NAME, timeout = timeout)
+        self.remove_scene_object(IMU_DEST_PANEL_NAME, timeout = timeout)
+        self.remove_scene_object(BOX_NAME, timeout = timeout)
+        self.remove_scene_object(COV_BOX_NAME, timeout = timeout)
+        self.remove_basics_scene(timeout = timeout)
+
+    # remove_scene_planes: Method that removes basic objects scene.
+    # @param: timeout -> Float, wait time.
+    # @returns: void
+    def remove_basics_scene(self, timeout = TIMEOUT):
+        self.remove_object(BASICS_SCENE+"1", timeout = timeout)   
+        self.remove_object(BASICS_SCENE+"2", timeout = timeout)      
+
     # add_buttons_plane: Method that adds buttons plane to the scene.
     # @param: timeout -> Float, wait time.
     # @param: z_disp  -> Float, displacement in z axis.
@@ -458,7 +613,7 @@ class RobotController(object):
             return False
         else:
             _imu_mrkr_pos, _imu_mrkr_or = pose2array(_imu_mrkr_pose, or_as = ROT_QUAT_REP)
-            _imu_pos = _imu_mrkr_pos+DISP_MRKR_IMU_TO_IMU
+            _imu_pos = _imu_mrkr_pos+rot_displacement(DISP_MRKR_IMU_TO_IMU, _imu_mrkr_or)
             _imu_pose = array2pose(_imu_pos, _imu_mrkr_or)
             self.add_object(IMU_NAME, CUBOID, _imu_pose, IMU_SIZE, timeout = timeout)
 
@@ -527,8 +682,122 @@ class RobotController(object):
     # ---------------------------------------------------------------------------------- #
     # ----------------------------- SECONDARY METHODS ---------------------------------- #
     # ---------------------------------------------------------------------------------- #
+    
+    # update_aruco_detect: Method that checks aruco detection with specified marker size.
+    # @param: mrkr_size       -> String, marker tag id.
+    # @param: button_position -> Int, button position.
+    # @returns: Void
+    def detect_aruco_hiden(self, mrkr_size = OTHER_MRKR_SIZE):
+        delay(500)
+        try:
+            self._aruco_request.size = int(mrkr_size*1000)
+            self._aruco_response = self._aruco_srv(self._aruco_request)
+            for position in range(len(self._aruco_response.markers)):
+                if self._aruco_response.markers[position].id < 10:
+                    return self._aruco_response.markers[position].id, self._aruco_response.markers[position].pose.pose
+            rospy.loginfo("Marker not found.")           
+        except:
+            rospy.loginfo("Can't use aruco_detect service.")
+            return None, None
+    
+    # update_aruco_detect: Method that checks aruco detection with specified marker size.
+    # @param: mrkr_size       -> String, marker tag id.
+    # @param: button_position -> Int, button position.
+    # @returns: Void
+    def update_aruco_detect(self, mrkr = NO_MRKR, button_position = 1):
+        delay(500)
+        try:
+            if mrkr != NO_MRKR:
+                self._aruco_request.size = int((IMU_COVER_MRKR_SIZE*(mrkr == IMU_MRKR or mrkr == INSP_PNL_CVR_MRKR)+
+                                                OTHER_MRKR_SIZE*(mrkr != IMU_MRKR and mrkr != INSP_PNL_CVR_MRKR))*1000)
+                self._aruco_response = self._aruco_srv(self._aruco_request)
+                if mrkr == BUTTON_MRKR:
+                    _mrkr_tag = mrkr+str(button_position)
+                else:
+                    _mrkr_tag = mrkr
+                for position in range(len(self._aruco_response.markers)):
+                    if 'tag'+str(self._aruco_response.markers[position].id) == _mrkr_tag:
+                        self.update_mrkr_pose('tag'+str(self._aruco_response.markers[position].id),self._aruco_response.markers[position].pose.pose)
+                        rospy.loginfo("Updated marker with tag"+str(self._aruco_response.markers[position].id))
+                        return True
+                rospy.loginfo("Marker not found.")
+            else:
+                self._aruco_request.size = int(OTHER_MRKR_SIZE*1000)
+                self._aruco_response = self._aruco_srv(self._aruco_request)
+                for position in range(len(self._aruco_response.markers)):
+                    if ('tag'+str(self._aruco_response.markers[position].id) == INSP_PNL_CVR_MRKR) or ('tag'+str(self._aruco_response.markers[position].id) == IMU_MRKR):
+                        continue
+                    self.update_mrkr_pose('tag'+str(self._aruco_response.markers[position].id),self._aruco_response.markers[position].pose.pose)
+                    #rospy.loginfo(str(self._aruco_response.markers[position].id)+"_"+str(OTHER_MRKR_SIZE))
+                
+                self._aruco_request.size = int(IMU_COVER_MRKR_SIZE*1000)
+                self._aruco_response = self._aruco_srv(self._aruco_request)
+                for position in range(len(self._aruco_response.markers)):
+                    if ('tag'+str(self._aruco_response.markers[position].id) == INSP_PNL_CVR_MRKR) or ('tag'+str(self._aruco_response.markers[position].id) == IMU_MRKR):
+                        self.update_mrkr_pose('tag'+str(self._aruco_response.markers[position].id),self._aruco_response.markers[position].pose.pose)
+                        #rospy.loginfo(str(self._aruco_response.markers[position].id)+"_"+str(IMU_COVER_MRKR_SIZE))
+                return True
+            
+        except:
+            rospy.loginfo("Can't use aruco_detect service.")
+            return False
+    
+    # active_aruco_subscriber: Method that actives updates directly from aruco subscriber.
+    # @param: mrkr_size       -> String, marker size in m.
+    # @returns: Void
+    def active_aruco_subscriber(self, mrkr_size):
+        try:
+            if mrkr_size == OTHER_MRKR_SIZE:
+                self._subs_mrkr50 = rospy.Subscriber(MRKRS50_ARUCO_TOPIC_NAME, MarkerArray, self.update_mrkr_subscriber50)
+                self._active_update50 = True
+            elif mrkr_size == IMU_COVER_MRKR_SIZE:
+                self._subs_mrkr40 = rospy.Subscriber(MRKRS50_ARUCO_TOPIC_NAME, MarkerArray, self.update_mrkr_subscriber40)
+                self._active_update40 = True
+            else:
+                rospy.loginfo("Please, enter only allowed marker size (0.05 m or 0.04 m).")
+        except:
+            rospy.loginfo("Aruco topic unavailable.")
+    
+    # disable_aruco_subscriber: Method that disable updates directly from aruco subscriber.
+    # @param: mrkr_size       -> String, marker size in m.
+    # @returns: Void
+    def disable_aruco_subscriber(self, mrkr_size = OTHER_MRKR_SIZE):
+        try:
+            if mrkr_size == OTHER_MRKR_SIZE:
+                self._subs_mrkr50.unregister()
+                self._active_update50 = False
+            elif mrkr_size == IMU_COVER_MRKR_SIZE:
+                self._subs_mrkr40.unregister()
+                self._active_update40 = False
+            else:
+                rospy.loginfo("Please, enter only allowed marker size (0.05 m or 0.04 m).")
+        except:
+            rospy.loginfo("Aruco topic unavailable.")
+    
+    # update_mrkr_subscriber50: Executed method when the node recives messages from aruco subscriber with
+    #                          marker size of 50 mm.
+    # @param: data     -> MarkerArray, markers.
+    # @returns: Void
+    def update_mrkr_subscriber50(self, data):
+        if self._active_update50:
+            for position in range(len(data.markers)):
+                if ('tag'+str(data.markers[position].id) == INSP_PNL_CVR_MRKR) or ('tag'+str(data.markers[position].id) == IMU_MRKR):
+                    continue
+                self.update_mrkr_pose('tag'+str(data.markers[position].id),data.markers[position].pose.pose)
+                #print('tag'+str(data.markers[position].id))
+    
+    # update_mrkr_subscriber40: Executed method when the node recives messages from aruco subscriber with
+    #                          marker size of 40 mm.
+    # @param: data     -> MarkerArray, markers.
+    # @returns: Void
+    def update_mrkr_subscriber40(self, data):
+        if self._active_update40:
+            for position in range(len(data.markers)):
+                if ('tag'+str(data.markers[position].id) == INSP_PNL_CVR_MRKR) or ('tag'+str(data.markers[position].id) == IMU_MRKR):
+                    self.update_mrkr_pose('tag'+str(data.markers[position].id),data.markers[position].pose.pose)
+                    #print('tag'+str(data.markers[position].id))
 
-    # get_current_joints_state: Method that chacks aruco results.
+    # get_current_joints_state: Method that checks aruco results.
     # @returns: array, current joints state.
     def check_aruco(self):
         try:
@@ -558,6 +827,25 @@ class RobotController(object):
             rospy.loginfo(f"ORION TEAM aruco markers score: {self._srv_response.score}")
         except:
             rospy.loginfo("Can't use erc_aruco_checker service")
+    
+    # check_aruco_error: Method that checks aruco error.
+    # @returns: dictionary, current aruco errors.
+    def check_aruco_error(self, aruco_pose_dictionary):
+        try:
+            self._aruco_error = copy.deepcopy(self._mrkrs)
+            for raw in range(0,14):
+                _aruco_pose = self.get_mrkr_pose("tag"+str(raw+1))
+                if _aruco_pose != None:
+                    _mrkr_dic = aruco_pose_dictionary.get('tag'+str(raw+1))
+                    _mrkr_self = pose_to_list(_aruco_pose)
+                    _aruco_error_tag = []
+                    for i in range(len(_mrkr_dic)):
+                        _aruco_error_tag.append(abs(_mrkr_dic[i] - _mrkr_self[i]))
+                    self._aruco_error["tag"+str(raw+1)] = _aruco_error_tag
+        except:
+            self._aruco_error = {}
+            rospy.loginfo("Can't check aruco error")
+        return self._aruco_error
 
     # get_current_joints_state: Method that returns the current joints state.
     # @returns: array, current joints state.
