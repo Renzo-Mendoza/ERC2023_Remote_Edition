@@ -59,13 +59,38 @@ def move_point(point, orientation, dist, axis = Z_AXIS_INDEX, absolute = False):
 #                 specific axis relative to an orientation or along an absolute axis,
 #                 without changing its orientation.
 # @param: pose        -> Pose, initial pose.
-# @param: orientation -> Array, orientation for relative displacement.
+# @param: dist        -> float, Displacement.
 # @param: axis        -> Int, desired axis of movement.
 # @param: absolute    -> Bool, absolute or relative.
 # @returns: Pose
 def move_pose_axis(pose, dist, axis = Z_AXIS_INDEX, absolute = False):
     pos_array, or_array = pose2array(pose)
     return array2pose(move_point(pos_array, or_array, dist, axis = axis, absolute = absolute), or_array)
+
+# move_pose_xyz: Method that determines the final pose displaced either along a 
+#                specific all axis relative to an orientation or along an absolute axis,
+#                without changing its orientation.
+# @param: pose        -> Pose, initial pose.
+# @param: dist        -> Array, Displacement.
+# @param: axis        -> Int, desired axis of movement.
+# @param: absolute    -> Bool, absolute or relative.
+# @returns: Pose
+def move_pose_xyz(pose, disp, absolute = False):
+    pos_array, or_array = pose2array(pose)
+    return array2pose(move_point(move_point(move_point(pos_array, 
+                                                       or_array, 
+                                                       disp[X_AXIS_INDEX], 
+                                                       axis = X_AXIS_INDEX, 
+                                                       absolute = absolute),
+                                            or_array, 
+                                            disp[Y_AXIS_INDEX], 
+                                            axis = Y_AXIS_INDEX, 
+                                            absolute = absolute),
+                                 or_array,
+                                 disp[Z_AXIS_INDEX], 
+                                 axis = Z_AXIS_INDEX, 
+                                 absolute = absolute), 
+                      or_array)
 
 # rot_vector_axis: Method that rotates a vector given a axis and rotation angle,
 #                  this method uses Rodrigues' rotation formula.
@@ -184,12 +209,22 @@ def rot_displacement(disp, orientation):
 # ---------------------------------------------------------------------------------- #
 
 # get_mrkr_pose: Method that returns an specific marker pose.
-# @param: mrkr            -> String, marker name: BUTTON_MRKR, IMU_MRKR, IMU_DEST_MRKR,
-#                            INSP_PNL_MRKR, INSP_PNL_CVR_MRKR, INSP_PNL_CVR_STG_MRKR.
-# @param: button_position -> String, button position, in case, 
+# @param: markers_pkg        -> String, Package where markers information is located.
+# @param: markers_folder     -> String, Folder inside the package.
+# @param: markers_file_name  -> String, Markers information file name.
 # @returns: Pose
 def load_markers_poses(markers_pkg, markers_folder, markers_file_name):
     return yaml.safe_load(open(RosPack().get_path(markers_pkg)+markers_folder+markers_file_name,'r'))
+
+
+# safe_mrkr_pose: Method that safes markers poses in yaml file.
+# @param: mrkr_dictionary    -> Dictionary, Marker dictionary..
+# @param: markers_pkg        -> String, Package where markers information is located.
+# @param: markers_folder     -> String, Folder inside the package.
+# @param: markers_file_name  -> String, Markers information file name.
+# @returns: Pose
+def safe_mrkr_pose(mrkr_dictionary, markers_pkg, markers_folder, markers_file_name):
+    open(RosPack().get_path(markers_pkg)+markers_folder+markers_file_name,'w').write('\n'.join([f'{key}: {value}' for key, value in mrkr_dictionary.items()]))
             
 # ---------------------------------------------------------------------------------- #
 # ---------------------------- SECONDARY FUNCTIONS --------------------------------- #

@@ -1,0 +1,5 @@
+<launch>
+    
+  <node pkg="erc_remote_maintenance" type="obj10.py"  name="obj10" output="screen"/>
+
+</launch>

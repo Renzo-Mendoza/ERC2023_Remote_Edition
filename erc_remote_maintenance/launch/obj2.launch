@@ -1,0 +1,8 @@
+<launch>
+  <arg name="tags"      default="0,0,0,0"/>
+    
+  <node pkg="erc_remote_maintenance" type="obj2.py"  name="obj2" output="screen">
+    <param name="tags" type="string" value="$(arg tags)"/>
+  </node>
+
+</launch>
